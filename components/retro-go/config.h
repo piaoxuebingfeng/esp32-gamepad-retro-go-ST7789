@@ -52,7 +52,7 @@
 #endif
 
 #ifndef RG_RECOVERY_BTN
-#define RG_RECOVERY_BTN RG_KEY_ANY
+#define RG_RECOVERY_BTN RG_KEY_X
 #endif
 
 #ifndef RG_BATTERY_CALC_PERCENT

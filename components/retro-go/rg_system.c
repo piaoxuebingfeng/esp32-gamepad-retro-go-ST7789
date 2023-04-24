@@ -315,6 +315,12 @@ static void setup_gpios(void)
     gpio_reset_pin(GPIO_NUM_14);
     gpio_reset_pin(GPIO_NUM_15);
 #endif
+    //test
+    printf("\n========================================================\n");
+    printf("beep close\r\n");
+    gpio_set_direction(GPIO_NUM_13, GPIO_MODE_OUTPUT);
+    gpio_set_level(GPIO_NUM_13, 0);
+    printf("\n========================================================\n");
 #ifndef RG_TARGET_SDL2
     if (RG_GPIO_LED != GPIO_NUM_NC)
         gpio_set_direction(RG_GPIO_LED, GPIO_MODE_OUTPUT);

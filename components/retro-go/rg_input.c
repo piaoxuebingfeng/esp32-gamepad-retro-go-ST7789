@@ -25,6 +25,13 @@ static esp_adc_cal_characteristics_t adc_chars;
 #endif
 
 
+#if RG_GAMEPAD_DRIVER == 7
+
+static volatile int16_t EncoderDiff = 0;
+
+#endif
+
+
 static inline uint32_t gamepad_read(void)
 {
     uint32_t state = 0;
@@ -60,6 +67,60 @@ static inline uint32_t gamepad_read(void)
 
 
     #endif
+#elif RG_GAMEPAD_DRIVER == 7    // GPIO gamepad-self-encoder
+    volatile int16_t diff;
+    //int joyX = adc1_get_raw(RG_GPIO_GAMEPAD_X);
+    //int joyY = adc1_get_raw(RG_GPIO_GAMEPAD_Y);
+
+    if (gpio_get_level(RG_GPIO_GAMEPAD_MENU))   state |= RG_KEY_MENU;
+    if (!gpio_get_level(RG_GPIO_GAMEPAD_OPTION)) state |= RG_KEY_OPTION;
+    if (gpio_get_level(RG_GPIO_GAMEPAD_SELECT)) state |= RG_KEY_START;//RG_KEY_SELECT;   // pull down
+    if (!gpio_get_level(RG_GPIO_GAMEPAD_START))  state |= RG_KEY_SELECT;// RG_KEY_START;
+    if (gpio_get_level(RG_GPIO_GAMEPAD_A))      state |= RG_KEY_A;       // pull down
+    if (gpio_get_level(RG_GPIO_GAMEPAD_B))      state |= RG_KEY_B;        // pull down
+    if (!gpio_get_level(RG_GPIO_GAMEPAD_UP))     state |= RG_KEY_UP;
+    if (!gpio_get_level(RG_GPIO_GAMEPAD_DOWN))     state |= RG_KEY_DOWN;
+    if (!gpio_get_level(RG_GPIO_GAMEPAD_LEFT))     state |= RG_KEY_LEFT;
+    if (!gpio_get_level(RG_GPIO_GAMEPAD_RIGHT))     state |= RG_KEY_RIGHT;
+
+     diff = -EncoderDiff;
+     if(diff)
+     {
+        // RG_LOGI("diff :%d \n\n",diff);
+        if(diff>0)
+        {
+            // RG_LOGI("state |= RG_KEY_UP,before state: "PRINTF_BINARY_16"\n",PRINTF_BINVAL_16(state));
+            state |= RG_KEY_RIGHT;
+            EncoderDiff=0;
+            // RG_LOGI("state |= RG_KEY_UP,after state: "PRINTF_BINARY_16"\n\n",PRINTF_BINVAL_16(state));
+        }
+        else if (diff<0)
+        {
+            // RG_LOGI("state |= RG_KEY_DOWN,before state: "PRINTF_BINARY_16"\n",PRINTF_BINVAL_16(state));
+            state |= RG_KEY_LEFT;
+            EncoderDiff=0;
+            // RG_LOGI("state |= RG_KEY_DOWN,after state: "PRINTF_BINARY_16"\n\n",PRINTF_BINVAL_16(state));
+        }
+     }
+
+
+    // #if RG_SCREEN_TYPE == 32
+    //     if(joyY > 2048) state |= RG_KEY_UP;
+    //     if(joyY > 1024 && joyY < 2048) state |= RG_KEY_DOWN;
+    //     if(joyX > 2048) state |= RG_KEY_LEFT;
+    //     if(joyX > 1024 && joyX < 2048) state |= RG_KEY_RIGHT;
+
+    //     if (state == (RG_KEY_SELECT|RG_KEY_A))
+    //         state = RG_KEY_OPTION;
+
+    //     if (state == (RG_KEY_START|RG_KEY_SELECT))
+    //         state = RG_KEY_MENU;
+    // #else
+    //     if (joyY > 2048 + 1024) state |= RG_KEY_UP;
+    //     else if (joyY > 1024)   state |= RG_KEY_DOWN;
+    //     if (joyX > 2048 + 1024) state |= RG_KEY_LEFT;
+    //     else if (joyX > 1024)   state |= RG_KEY_RIGHT;
+    // #endif
 
 #elif RG_GAMEPAD_DRIVER == 2  // Serial
     gpio_set_level(RG_GPIO_GAMEPAD_LATCH, 0);
@@ -157,7 +218,7 @@ static inline uint32_t gamepad_read(void)
 
 static void input_task(void *arg)
 {
-    const uint8_t debounce_level = 0x03;
+    const uint8_t debounce_level = 0x01; //0x03;
     uint8_t debounce[RG_KEY_COUNT] = {0};
     uint32_t local_gamepad_state = 0;
 
@@ -169,7 +230,9 @@ static void input_task(void *arg)
     while (input_task_running)
     {
         uint32_t state = gamepad_read();
-
+// #if RG_GAMEPAD_DRIVER == 7
+//         RG_LOGI("[before] %d %d %d %d \n\n",debounce[0],debounce[1],debounce[2],debounce[3]);
+// #endif
         for (int i = 0; i < RG_KEY_COUNT; ++i)
         {
             debounce[i] = ((debounce[i] << 1) | ((state >> i) & 1));
@@ -185,14 +248,49 @@ static void input_task(void *arg)
             }
         }
 
-        gamepad_state = local_gamepad_state;
 
+        gamepad_state = local_gamepad_state;
+// #if RG_GAMEPAD_DRIVER == 7
+//         RG_LOGI("[after ] %d %d %d %d \n\n",debounce[0],debounce[1],debounce[2],debounce[3]);
+//         RG_LOGI(" state :"PRINTF_BINARY_16"\n\n",PRINTF_BINVAL_16(state));
+//         RG_LOGI("game pad state:"PRINTF_BINARY_16"\n\n",PRINTF_BINVAL_16(gamepad_state));
+// #endif
         rg_task_delay(10);
     }
 
     input_task_running = false;
     gamepad_state = -1;
     rg_task_delete(NULL);
+}
+
+static void IRAM_ATTR rg_encoder_gpio_isr_handler(void* arg)
+{
+    static volatile int count, countLast;
+    static volatile uint8_t a0, b0;
+    static volatile uint8_t ab0;
+    uint8_t a = gpio_get_level(RG_GPIO_GAMEPAD_ENCODER_A);
+    uint8_t b = gpio_get_level(RG_GPIO_GAMEPAD_ENCODER_B);
+    if (a != a0)
+    {
+        a0 = a;
+        if (b != b0)
+        {
+            b0 = b;
+            count += ((a == b) ? 1 : -1);
+            if ((a == b) != ab0)
+            {
+                count += ((a == b) ? 1 : -1);
+            }
+            ab0 = (a == b);
+        }
+    }
+
+    if (count != countLast)
+    {
+        EncoderDiff += (count - countLast) > 0 ? 1 : -1;
+        countLast = count;
+    }
+
 }
 
 void rg_input_init(void)
@@ -220,6 +318,56 @@ void rg_input_init(void)
     gpio_set_pull_mode(RG_GPIO_GAMEPAD_A, GPIO_PULLUP_ONLY);
     gpio_set_direction(RG_GPIO_GAMEPAD_B, GPIO_MODE_INPUT);
     gpio_set_pull_mode(RG_GPIO_GAMEPAD_B, GPIO_PULLUP_ONLY);
+#elif RG_GAMEPAD_DRIVER == 7  // GPIO gamepad self-encoder
+
+    const char *driver = "GPIO-GAMEPAD";
+
+    // adc1_config_width(ADC_WIDTH_MAX - 1);
+    // adc1_config_channel_atten(RG_GPIO_GAMEPAD_X, ADC_ATTEN_DB_11);
+    // adc1_config_channel_atten(RG_GPIO_GAMEPAD_Y, ADC_ATTEN_DB_11);
+
+    gpio_set_direction(RG_GPIO_GAMEPAD_MENU, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(RG_GPIO_GAMEPAD_MENU, GPIO_PULLDOWN_ONLY);
+    // gpio_set_pull_mode(RG_GPIO_GAMEPAD_MENU, GPIO_PULLUP_ONLY);
+    gpio_set_direction(RG_GPIO_GAMEPAD_OPTION, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(RG_GPIO_GAMEPAD_OPTION, GPIO_PULLUP_ONLY);
+    gpio_set_direction(RG_GPIO_GAMEPAD_SELECT, GPIO_MODE_INPUT);
+    // gpio_set_pull_mode(RG_GPIO_GAMEPAD_SELECT, GPIO_PULLUP_ONLY);
+
+    gpio_set_direction(RG_GPIO_GAMEPAD_UP, GPIO_MODE_INPUT);
+    // gpio_set_pull_mode(RG_GPIO_GAMEPAD_UP, GPIO_PULLUP_ONLY);
+    gpio_set_direction(RG_GPIO_GAMEPAD_DOWN, GPIO_MODE_INPUT);
+    // gpio_set_pull_mode(RG_GPIO_GAMEPAD_DOWN, GPIO_PULLUP_ONLY);
+    gpio_set_direction(RG_GPIO_GAMEPAD_LEFT, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(RG_GPIO_GAMEPAD_LEFT, GPIO_PULLUP_ONLY);
+    gpio_set_direction(RG_GPIO_GAMEPAD_RIGHT, GPIO_MODE_INPUT);
+    // gpio_set_pull_mode(RG_GPIO_GAMEPAD_RIGHT, GPIO_PULLUP_ONLY);
+
+    gpio_set_direction(RG_GPIO_GAMEPAD_START, GPIO_MODE_INPUT);
+    gpio_set_pull_mode(RG_GPIO_GAMEPAD_START, GPIO_PULLUP_ONLY);
+    gpio_set_direction(RG_GPIO_GAMEPAD_A, GPIO_MODE_INPUT);
+    // gpio_set_pull_mode(RG_GPIO_GAMEPAD_A, GPIO_PULLUP_ONLY);
+    gpio_set_direction(RG_GPIO_GAMEPAD_B, GPIO_MODE_INPUT);
+    // gpio_set_pull_mode(RG_GPIO_GAMEPAD_B, GPIO_PULLUP_ONLY);
+
+
+    RG_LOGI("gamepad encoder init \n\n");
+    gpio_config_t gpio_encoder_A = {
+        .pin_bit_mask = 1ULL << RG_GPIO_GAMEPAD_ENCODER_A,
+        .mode = GPIO_MODE_INPUT,
+        .intr_type = GPIO_INTR_ANYEDGE,
+        //.intr_type = GPIO_INTR_NEGEDGE,
+        .pull_up_en = 1,
+    };
+    gpio_config(&gpio_encoder_A);
+
+    gpio_set_direction(RG_GPIO_GAMEPAD_ENCODER_B,GPIO_MODE_INPUT);
+    gpio_set_pull_mode(RG_GPIO_GAMEPAD_ENCODER_B,GPIO_PULLUP_ONLY);
+
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(RG_GPIO_GAMEPAD_ENCODER_A, rg_encoder_gpio_isr_handler, (void*)RG_GPIO_GAMEPAD_ENCODER_A);
+
+
 
 #elif RG_GAMEPAD_DRIVER == 2  // Serial
 
@@ -293,7 +441,14 @@ void rg_input_init(void)
     rg_task_create("rg_input", &input_task, NULL, 2 * 1024, RG_TASK_PRIORITY - 1, 1);
     while (gamepad_state == -1)
         rg_task_delay(1);
-    RG_LOGI("Input ready. driver='%s', state=" PRINTF_BINARY_16 "\n", driver, PRINTF_BINVAL_16(gamepad_state));
+    RG_LOGI("Input ready. driver='%s',RG_GAMEPAD_DRIVER NUM %d, state=" PRINTF_BINARY_16 "\n\n", driver, RG_GAMEPAD_DRIVER ,PRINTF_BINVAL_16(gamepad_state));
+#if RG_GAMEPAD_DRIVER == 7
+    RG_LOGI("RG_GPIO_GAMEPAD_MENU   :%d \n",gpio_get_level(RG_GPIO_GAMEPAD_MENU));
+    RG_LOGI("RG_GPIO_GAMEPAD_SELECT :%d \n",gpio_get_level(RG_GPIO_GAMEPAD_SELECT));
+    RG_LOGI("RG_GPIO_GAMEPAD_A      :%d \n",gpio_get_level(RG_GPIO_GAMEPAD_A));
+    RG_LOGI("RG_GPIO_GAMEPAD_UP     :%d \n\n",gpio_get_level(RG_GPIO_GAMEPAD_UP));
+#endif
+
 }
 
 void rg_input_deinit(void)
